@@ -354,30 +354,55 @@ if uploaded_file:
             show_evaluation_chart(all_reqs)
             show_summary_pie_chart(all_reqs)
 
-            json_report = json.dumps(final_response, indent=4)
-            st.download_button("📥 Download JSON Report", json_report, "requirement_analysis.json", "application/json")
+            # ✅ Store evaluated data
+            st.session_state["all_reqs"] = all_reqs
+            st.session_state["final_response"] = final_response
+            st.session_state["evaluation_done"] = True
 
-            excel_df = export_to_excel(all_reqs)
-            excel_buffer = BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                excel_df.to_excel(writer, index=False)
-            excel_buffer.seek(0)
-            st.download_button("📊 Download Excel Report", data=excel_buffer, file_name="requirement_analysis.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            # ✅ Prepare export files
+            if "json_report" not in st.session_state:
+                st.session_state["json_report"] = json.dumps(final_response, indent=4)
 
-            st.download_button("📄 Download CSV Report", data=excel_df.to_csv(index=False), file_name="requirement_analysis.csv", mime="text/csv")
+            if "excel_buffer" not in st.session_state:
+                excel_df = export_to_excel(all_reqs)
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    excel_df.to_excel(writer, index=False)
+                buffer.seek(0)
+                st.session_state["excel_buffer"] = buffer
 
-            st.subheader("🗣️ User Feedback")
-            user_feedback = st.text_area("💬 Leave your feedback about this analysis:")
-            if st.button("✅ Submit Feedback"):
-                feedback_entry = {
-                    "filename": uploaded_file.name,
-                    "feedback": user_feedback,
-                    "total_requirements": len(all_reqs)
-                }
-                feedback_log.append(feedback_entry)
-                st.success("Thank you for your feedback!")
+            if "csv_report" not in st.session_state:
+                st.session_state["csv_report"] = export_to_excel(all_reqs).to_csv(index=False)
 
-            if feedback_log:
-                feedback_json = json.dumps(feedback_log, indent=2)
-                st.download_button("📤 Download Feedback Log", data=feedback_json, file_name="feedback_log.json", mime="application/json")
+# ✅ Download section
+st.subheader("⬇️ Download Results")
 
+if "json_report" in st.session_state:
+    st.download_button("📥 Download JSON Report", st.session_state["json_report"], "requirement_analysis.json", "application/json")
+
+if "excel_buffer" in st.session_state:
+    st.download_button("📊 Download Excel Report", st.session_state["excel_buffer"], "requirement_analysis.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+if "csv_report" in st.session_state:
+    st.download_button("📄 Download CSV Report", st.session_state["csv_report"], "requirement_analysis.csv", "text/csv")
+
+# ✅ Feedback form
+st.subheader("🗣️ User Feedback")
+
+if "feedback_log" not in st.session_state:
+    st.session_state["feedback_log"] = []
+
+user_feedback = st.text_area("💬 Leave your feedback about this analysis:")
+
+if st.button("✅ Submit Feedback"):
+    feedback_entry = {
+        "filename": uploaded_file.name if uploaded_file else "unknown_file",
+        "feedback": user_feedback,
+        "total_requirements": len(st.session_state.get("all_reqs", []))
+    }
+    st.session_state["feedback_log"].append(feedback_entry)
+    st.success("✅ Thank you for your feedback!")
+
+if st.session_state["feedback_log"]:
+    feedback_json = json.dumps(st.session_state["feedback_log"], indent=2)
+    st.download_button("📤 Download Feedback Log", feedback_json, "feedback_log.json", "application/json")
