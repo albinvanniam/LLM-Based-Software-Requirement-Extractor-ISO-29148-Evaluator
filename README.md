@@ -56,13 +56,4 @@ OPENAI_API_KEY=your-api-key-here
 streamlit run app.py
 
 
-###  Project Structure
-
-├── app.py                  # Streamlit web app
-├── extractors/             # PDF/DOCX requirement extraction logic
-├── evaluators/             # ISO 29148 evaluation and LLM prompting
-├── utils/                  # Helper functions, formatting, etc.
-├── .env                    # Your OpenAI API key (not tracked)
-├── requirements.txt        # Python dependencies
-└── README.md               # Project overview (this file)
 
