@@ -1,6 +1,6 @@
 # LLM-Based Software Requirement Extractor & ISO 29148 Evaluator
 
-This project is a powerful, LLM-driven tool designed to assist software analysts by **automatically extracting requirements** from specification documents and **evaluating them against ISO/IEC/IEEE 29148 standards**. Built using **OpenAI's GPT-4 Turbo** and integrated into a **Streamlit web app**, it ensures high-quality, structured software requirement analysis and guidance.
+This project is a LLM-driven tool designed to assist software analysts by **automatically extracting requirements** from specification documents and **evaluating them against ISO/IEC/IEEE 29148 standards**. Built using **OpenAI's GPT-4 Turbo** and integrated into a **Streamlit web app**, it ensures high-quality, structured software requirement analysis and guidance.
 
 ##  Features
 
