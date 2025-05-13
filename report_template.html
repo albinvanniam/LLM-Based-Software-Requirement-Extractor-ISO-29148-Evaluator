@@ -1,0 +1,33 @@
+<body>
+<h1>📋 Software Requirement Analysis Report</h1>
+<h2>Original Document</h2>
+<pre>{{ original_text }}</pre>
+
+<h2>Annotated Document</h2>
+<div>{{ annotated_text | safe }}</div>
+
+<h2>Functional Requirements</h2>
+<ul>{% for req in functional %}<li><b>{{ req.RequirementID }}</b>: {{ req.Requirement }}</li>{% endfor %}</ul>
+
+<h2>Non-Functional Requirements</h2>
+<ul>{% for req in non_functional %}<li><b>{{ req.RequirementID }}</b>: {{ req.Requirement }}</li>{% endfor %}</ul>
+
+<h2>Evaluation Results</h2>
+{% for req in evaluations %}
+    <p><b>{{ req.RequirementID }}</b>: {{ req.Requirement }}</p>
+    <ul>
+        {% for dim, val in req.quality_evaluation.items() %}
+            <li>{{ dim }} - {{ val.value }}: {{ val.reason }}</li>
+        {% endfor %}
+    </ul>
+{% endfor %}
+
+<h2>Visual Charts</h2>
+<img src="data:image/png;base64,{{ pie_chart }}">
+<img src="data:image/png;base64,{{ bar_chart }}">
+
+<h2>Feedback Summary</h2>
+{% for f in feedback %}
+    <p><b>{{ f.filename }}</b>: {{ f.feedback }}</p>
+{% endfor %}
+</body>
