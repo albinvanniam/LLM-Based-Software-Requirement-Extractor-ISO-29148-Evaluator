@@ -217,6 +217,9 @@ def show_summary_metrics(requirements):
 
 
 def show_summary_pie_chart(requirements):
+    from collections import Counter
+    import matplotlib.pyplot as plt
+
     values = Counter()
     for req in requirements:
         qa = req.get("quality_evaluation", {})
@@ -229,10 +232,20 @@ def show_summary_pie_chart(requirements):
     labels = list(values.keys())
     counts = [values[l] for l in labels]
 
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.pie(counts, labels=labels, autopct='%1.1f%%', startangle=140)
-    ax.set_title("ISO 29148 Evaluation Distribution")
-    st.pyplot(fig)
+    fig, ax = plt.subplots(figsize=(4, 4))  # Compact size
+    wedges, texts, autotexts = ax.pie(
+        counts,
+        labels=labels,
+        autopct='%1.1f%%',
+        startangle=140,
+        wedgeprops=dict(width=0.4, edgecolor='white'),
+        textprops=dict(color="black", fontsize=10)
+    )
+    ax.set_title("📊 ISO 29148 Evaluation Distribution", fontsize=12)
+    plt.setp(autotexts, weight="bold", fontsize=10)
+
+    with st.expander("📊 View ISO Evaluation Pie Chart", expanded=False):
+        st.pyplot(fig)
 
 if 'final_response' in st.session_state and st.session_state.get('evaluation_done'):
     all_reqs = st.session_state['final_response']['functional_requirements'] + st.session_state['final_response']['non_functional_requirements']
@@ -244,6 +257,9 @@ if 'final_response' in st.session_state and st.session_state.get('evaluation_don
         st.info("ℹ️ Quality evaluations not found. Please extract and evaluate requirements first.")
 
 def show_evaluation_chart(requirements):
+    from collections import defaultdict
+    import matplotlib.pyplot as plt
+
     quality_counts = defaultdict(lambda: {"Yes": 0, "Partially": 0, "No": 0})
     for req in requirements:
         for charac, result in req.get("quality_evaluation", {}).items():
@@ -254,21 +270,22 @@ def show_evaluation_chart(requirements):
     partially = [quality_counts[label]["Partially"] for label in labels]
     no = [quality_counts[label]["No"] for label in labels]
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    bar_width = 0.25
     x = range(len(labels))
+    bar_width = 0.25
 
-    ax.bar(x, yes, width=bar_width, label='Yes')
-    ax.bar([p + bar_width for p in x], partially, width=bar_width, label='Partially')
-    ax.bar([p + 2 * bar_width for p in x], no, width=bar_width, label='No')
+    fig, ax = plt.subplots(figsize=(6, 3))  # Shorter chart
+    ax.bar(x, yes, width=bar_width, label='✅ Yes', edgecolor='white')
+    ax.bar([p + bar_width for p in x], partially, width=bar_width, label='🟠 Partially', edgecolor='white')
+    ax.bar([p + 2 * bar_width for p in x], no, width=bar_width, label='❌ No', edgecolor='white')
 
     ax.set_xticks([p + bar_width for p in x])
-    ax.set_xticklabels(labels, rotation=45, ha='right')
-    ax.set_ylabel("Count")
-    ax.set_title("ISO 29148 Evaluation Summary")
-    ax.legend()
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel("Count", fontsize=10)
+    ax.set_title("📈 ISO 29148 Evaluation Summary", fontsize=12)
+    ax.legend(fontsize=9)
 
-    st.pyplot(fig)
+    with st.expander("📈 View Evaluation Bar Chart", expanded=False):
+        st.pyplot(fig)
 
 
 if uploaded_file:
