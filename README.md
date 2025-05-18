@@ -53,7 +53,9 @@ OPENAI_API_KEY=your-api-key-here
 
 ### 4. Run the App
 
-streamlit run app.py
+streamlit run main.py
+
+python flask_api.py
 
 
 
