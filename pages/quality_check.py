@@ -15,6 +15,9 @@ import uuid
 import tempfile
 import shutil
 import matplotlib
+from difflib import SequenceMatcher
+import re
+
 matplotlib.use('Agg')  # Prevent tkinter errors
 
 # Load API Key
@@ -52,6 +55,7 @@ def translate_to_english(text, source_lang):
         st.warning(f"Translation failed: {str(e)}")
         return text
 
+
 def extract_text_from_pdf(pdf_file):
     try:
         doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
@@ -59,6 +63,7 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         st.error(f"⚠️ Error extracting text from PDF: {str(e)}")
         return ""
+
 
 def extract_text_from_docx(docx_file):
     try:
@@ -68,20 +73,17 @@ def extract_text_from_docx(docx_file):
         st.error(f"⚠️ Error extracting text from DOCX: {str(e)}")
         return ""
 
+
 def split_text(text, chunk_size=6000, overlap=1000):
     words = text.split()
     return [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size - overlap)]
 
-def annotate_text(text, requirements):
-    annotated = text
-    for req in requirements:
-        snippet = req["Requirement"]
-        if snippet in annotated:
-            style = "background-color: #cf2cff; color: black; padding: 2px 4px; border-radius: 6px; font-weight: bold;"
-            if req["RequirementID"].startswith("NFR"):
-                style = "background-color: #fbd4e6; color: black; padding: 2px 4px; border-radius: 6px; font-weight: bold;"
-            annotated = annotated.replace(snippet, f'<span style="{style}">{snippet}</span>')
-    return annotated
+def clean_text(text):
+    # Merge broken lines and normalize spaces
+    text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)  # Join mid-sentence line breaks
+    text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
+    return text.strip()
+
 
 def get_requirement_extraction_prompt_json(chunk_text):
     example = {
@@ -103,24 +105,111 @@ def get_requirement_extraction_prompt_json(chunk_text):
         "task": "Extract software requirements from a document.",
         "instructions": {
             "description": (
-                "You are an AI expert in software requirements engineering. Your task is to extract only the functional and non-functional requirements "
-                "from the provided document content. Do not include introductions, project background, context, definitions, or any non-requirement content."
+                "You are an AI expert in software requirements engineering. Your task is to extract all functional and "
+                "non-functional requirements from the provided document content. Do not include background, context, "
+                "marketing, or explanatory text. Focus only on statements that describe system behavior, user needs, "
+                "performance goals, environmental assumptions, or implementation constraints."
             ),
-            "output_format": example,
+            "output_format": {
+                "functional_requirements": [
+                    {"RequirementID": "FR-001", "Requirement": "The system shall allow users to upload PDF files."}
+                ],
+                "non_functional_requirements": [
+                    {
+                        "RequirementID": "NFR-001",
+                        "Requirement": "The system shall respond to upload requests within 2 seconds."
+                    }
+                ],
+                "missing_critical_requirements": [
+                    "The document does not mention any backup or recovery mechanism."
+                ],
+                "recommendations": [
+                    "Add explicit performance thresholds for critical operations."
+                ]
+            },
             "notes": [
                 "Output must be in valid JSON format.",
-                "Only include requirements, not descriptions or commentary.",
-                "Do not include the same requirement more than once.",
-                "Ensure each requirement is clearly worded and testable."
+                (
+                    "Only include actual requirements — statements that express system behavior, "
+                    "conditions, or capabilities."
+                ),
+                "Ensure each requirement is atomic, clear, and testable.",
+                (
+                    "Include all requirement-like statements even if they are not explicitly labeled "
+                    "with 'FR' or 'NFR'."
+                ),
+                "Include system-level, software-level, and communication-level behaviors.",
+                (
+                    "Identify requirements in structured formats such as '3.2.x.y', bulleted lists, or "
+                    "clauses using 'shall', 'must', 'is required to', or 'will'."
+                ),
+                (
+                    "Extract both capabilities (functional) and constraints, assumptions, compatibility "
+                    "notes (non-functional)."
+                ),
+                "Recognize requirements written as objectives, features, or stakeholder goals.",
+                (
+                    "Do not ignore implied behaviors even if they are not phrased as mandatory "
+                    "(e.g., 'should', 'includes')."
+                )
             ],
             "example_input_chunk": (
-                "The system will allow the user to upload and store PDF files. Performance should be responsive, with no noticeable delay. "
-                "There is currently no mention of backup and recovery. It is recommended to include scalability goals as well."
+                "3.2.1.1 agentMom shall support the ability to send unicast message.\n"
+                "3.2.1.3 Unicast message shall only be received by the specified address.\n"
+                "5.1 The website should maintain rapid response time suitable for high school students.\n"
+                "The site should allow searches for internal and external CS information.\n"
+                "3.13 Consider a CS Minor — present interdisciplinary value of combining CS with law or medicine.\n"
+                "Constraints include bandwidth limitations and Chancellor’s Office resource availability.\n"
+                "The system should track hits and adapt design based on usage analytics.\n"
+                "The system shall work on IE, Firefox, and Netscape browsers."
             ),
-            "example_output": example
+            "example_output": {
+                "functional_requirements": [
+                    {
+                        "RequirementID": "FR-001",
+                        "Requirement": "agentMom shall support the ability to send unicast message."
+                    },
+                    {
+                        "RequirementID": "FR-002",
+                        "Requirement": "Unicast message shall only be received by the specified address."
+                    },
+                    {
+                        "RequirementID": "FR-003",
+                        "Requirement": "The system shall allow searches for both internal and external" 
+                                       "CS-related information."
+                    },
+                    {
+                        "RequirementID": "FR-004",
+                        "Requirement": "The system shall be compatible with IE, Firefox, and Netscape browsers."
+                    },
+                    {
+                        "RequirementID": "FR-005",
+                        "Requirement": "The system shall include a section to promote the value of a CS minor" 
+                                       "in other disciplines."
+                    }
+                ],
+                "non_functional_requirements": [
+                    {
+                        "RequirementID": "NFR-001",
+                        "Requirement": "The website shall maintain fast response times to suit high school users."
+                    },
+                    {
+                        "RequirementID": "NFR-002",
+                        "Requirement": "The system shall track site usage metrics and adjust content" 
+                                       "based on analytics."
+                    },
+                    {
+                        "RequirementID": "NFR-003",
+                        "Requirement": "The system shall operate under bandwidth and resource availability constraints."
+                    }
+                ],
+                "missing_critical_requirements": [],
+                "recommendations": []
+            }
         },
         "document_chunk": chunk_text
     }
+
 
     return [
         {
@@ -300,11 +389,6 @@ if uploaded_file:
     source_lang_code = language_code_map[selected_language]
     extracted_text = translate_to_english(extracted_text, source_lang_code)
 
-    if st.toggle("🖍️ Show Annotated Document", value=True):
-        st.session_state.show_annotated = True
-    else:
-        st.session_state.show_annotated = False
-
     if st.button("Extract & Evaluate Requirements"):
         if not extracted_text:
             st.warning("⚠️ No text found to analyze.")
@@ -343,10 +427,11 @@ if uploaded_file:
 
             all_reqs = final_response["functional_requirements"] + final_response["non_functional_requirements"]
 
-            if st.session_state.get("show_annotated"):
-                st.markdown(annotate_text(extracted_text, all_reqs), unsafe_allow_html=True)
-            else:
-                st.text_area("📄 Extracted Full Document Content (Editable):", extracted_text, height=300)
+            cleaned_text = clean_text(extracted_text)
+
+            with st.expander("🖍️ View Full Document", expanded=False):
+
+                st.markdown(f"<div style='white-space: pre-wrap; font-size: 15px;'>{cleaned_text}</div>", unsafe_allow_html=True)
 
             st.subheader("📋 Extracted Requirements")
             st.markdown("### 🛠 Functional Requirements")
