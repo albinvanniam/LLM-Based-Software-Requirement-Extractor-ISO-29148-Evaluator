@@ -17,6 +17,9 @@ import shutil
 import matplotlib
 from difflib import SequenceMatcher
 import re
+from langdetect import detect, DetectorFactory
+DetectorFactory.seed = 0  # For consistent results
+
 
 matplotlib.use('Agg')  # Prevent tkinter errors
 
@@ -27,7 +30,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-st.title("✅ AI-Powered Software Requirement Extractor + ISO 29148 Evaluator")
+st.title(" AI-Powered Software Requirement Extractor + ISO 29148 Evaluator")
 
 language_options = ["English", "German", "Spanish", "French", "Italian"]
 language_code_map = {"English": "en", "German": "de", "Spanish": "es", "French": "fr", "Italian": "it"}
@@ -35,12 +38,34 @@ selected_language = st.selectbox("🌐 Document Language", language_options, ind
 
 feedback_log = []
 
-uploaded_file = st.file_uploader("📂 Upload a Software Requirement Document (PDF or DOCX)", type=["pdf", "docx"])
+FEEDBACK_FILE = "feedback_log.json"
+
+# Load existing feedback from file if exists
+if os.path.exists(FEEDBACK_FILE):
+    with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        try:
+            st.session_state["feedback_log"] = json.load(f)
+        except json.JSONDecodeError:
+            st.session_state["feedback_log"] = []
+else:
+    st.session_state["feedback_log"] = []
+
+uploaded_file = st.file_uploader("💻 Upload a Software Requirement Document (PDF or DOCX)", type=["pdf", "docx"])
 
 
 def translate_to_english(text, source_lang):
+    try:
+        detected_lang = detect(text)
+    except Exception:
+        detected_lang = "unknown"
+
+    if detected_lang == "en":
+        # Document is already in English; skip translation
+        return text
+
     if source_lang == "en":
         return text
+
     prompt = [
         {"role": "system", "content": f"Translate the following {source_lang} text to English."},
         {"role": "user", "content": text}
@@ -83,6 +108,23 @@ def clean_text(text):
     text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)  # Join mid-sentence line breaks
     text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
     return text.strip()
+
+
+def get_document_objectives_prompt(chunk_text):
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are an expert requirements engineer. Given a chunk of a requirement document, "
+                "identify high-level objectives, major goals, and overall purpose of the system being described. "
+                "Avoid listing individual requirements. Focus only on what the document aims to achieve overall."
+            )
+        },
+        {
+            "role": "user",
+            "content": f"Extract objectives, major goals, and purpose from the following text:\n\n{chunk_text}"
+        }
+    ]
 
 
 def get_requirement_extraction_prompt_json(chunk_text):
@@ -218,44 +260,41 @@ def get_requirement_extraction_prompt_json(chunk_text):
         }
     ]
 
-
-def evaluate_requirement_quality_iso(requirement_text, req_id):
-    example_input = {
-        "RequirementID": "REQ-1",
-        "RequirementText": "The user can split only one document at a time."
-    }
-
-    example_output = {
-        "RequirementID": "REQ-1",
-        "RequirementText": "The user can split only one document at a time.",
-        "ISO29148_QualityAssessment": {
-            "Appropriate": {"value": "Yes", "reason": "It aligns with user needs for document splitting."},
-            "Complete": {"value": "Yes", "reason": "The description fully explains the behavior."},
-            "Conforming": {"value": "Yes", "reason": "Follows expected structure for functional requirements."},
-            "Correct": {"value": "Yes", "reason": "Describes intended system behavior accurately."},
-            "Feasible": {"value": "Yes", "reason": "Technically achievable with standard tools."},
-            "Necessary": {"value": "Yes", "reason": "A basic feature of a PDF splitting tool."},
-            "Singular": {"value": "Yes", "reason": "Describes a single function without conjunctions."},
-            "Unambiguous": {"value": "Yes", "reason": "Clearly states what the user can do."},
-            "Verifiable": {"value": "Yes", "reason": "Can be tested with a single PDF document."}
-        }
-    }
-
-    json_prompt = {
-        "task": "Evaluate a software requirement using ISO/IEC 29148 quality characteristics.",
+def get_updated_iso_prompt(requirement_text, req_id):
+    prompt = {
+        "task": "Evaluate a software requirement using ISO/IEC 29148 quality characteristics with numeric scores.",
         "instructions": {
             "criteria": [
                 "Appropriate", "Complete", "Conforming", "Correct",
                 "Feasible", "Necessary", "Singular", "Unambiguous", "Verifiable"
             ],
-            "output_format": example_output,
+            "scoring_scale": {
+                "0": "Not satisfied at all",
+                "1": "Poorly satisfied",
+                "2": "Partially satisfied",
+                "3": "Mostly satisfied",
+                "4": "Fully satisfied"
+            },
+            "output_format": {
+                "RequirementID": req_id,
+                "RequirementText": requirement_text,
+                "ISO29148_QualityAssessment": {
+                    "Appropriate": {"score": 3, "justification": "Mostly satisfies user relevance."},
+                    "Complete": {"score": 4, "justification": "Fully details the requirement."},
+                    "Conforming": {"score": 3, "justification": "Follows expected structure."},
+                    "Correct": {"score": 4, "justification": "Accurately describes behavior."},
+                    "Feasible": {"score": 4, "justification": "Technically realistic with available tools."},
+                    "Necessary": {"score": 3, "justification": "Important but not critical."},
+                    "Singular": {"score": 4, "justification": "Describes a single behavior."},
+                    "Unambiguous": {"score": 3, "justification": "Clear wording, with minor ambiguity."},
+                    "Verifiable": {"score": 4, "justification": "Can be easily tested or measured."}
+                }
+            },
             "notes": [
-                "Each criterion must be rated as 'Yes', 'No', or 'Partially'.",
-                "Include a brief reason for each evaluation.",
-                "Follow the output format exactly as shown in the example."
-            ],
-            "example_input": example_input,
-            "example_output": example_output
+                "Each criterion must be scored from 0 to 4.",
+                "Include a brief justification for each score.",
+                "Follow the JSON format exactly as shown in output_format."
+            ]
         },
         "requirement_to_evaluate": {
             "RequirementID": req_id,
@@ -263,21 +302,26 @@ def evaluate_requirement_quality_iso(requirement_text, req_id):
         }
     }
 
+    return [
+        {
+            "role": "user",
+            "content": f"Please evaluate this requirement using the following structured JSON prompt:\n\n{json.dumps(prompt, indent=2)}"
+        }
+    ]
+
+
+
+def evaluate_requirement_quality_iso(requirement_text, req_id):
     try:
+        prompt = get_updated_iso_prompt(requirement_text, req_id)
         response = client.chat.completions.create(
             model="gpt-4-turbo",
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Please evaluate this requirement using the following JSON-based instruction:\n\n{json.dumps(json_prompt, indent=2)}"
-                }
-            ],
+            messages=prompt,
             response_format={"type": "json_object"}
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         return {"RequirementID": req_id, "error": str(e)}
-
 
 def export_to_excel(requirements):
     rows = []
@@ -285,8 +329,8 @@ def export_to_excel(requirements):
         row = {"RequirementID": req["RequirementID"], "Requirement": req["Requirement"]}
         qa = req.get("quality_evaluation", {})
         for dim, val in qa.items():
-            row[f"{dim}_Value"] = val["value"]
-            row[f"{dim}_Reason"] = val["reason"]
+            row[f"{dim}_Score"] = val.get("score", "N/A")
+            row[f"{dim}_Justification"] = val.get("justification", "N/A")
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -305,23 +349,19 @@ def show_summary_metrics(requirements):
         st.warning(f"⚠️ {other_count} requirement(s) did not follow 'FR' or 'NFR' prefix convention.")
 
 
-def show_summary_pie_chart(requirements):
-    from collections import Counter
-    import matplotlib.pyplot as plt
+def show_type_distribution_chart(requirements):
+    labels = ['Functional', 'Non-Functional', 'Other']
+    counts = [0, 0, 0]
 
-    values = Counter()
     for req in requirements:
-        qa = req.get("quality_evaluation", {})
-        for _, dim in qa.items():
-            values[dim["value"]] += 1
-    if not values:
-        st.warning("No quality evaluation data to display.")
-        return
+        if req["RequirementID"].startswith("FR"):
+            counts[0] += 1
+        elif req["RequirementID"].startswith("NFR"):
+            counts[1] += 1
+        else:
+            counts[2] += 1
 
-    labels = list(values.keys())
-    counts = [values[l] for l in labels]
-
-    fig, ax = plt.subplots(figsize=(4, 4))  # Compact size
+    fig, ax = plt.subplots(figsize=(2.5, 2.5))
     wedges, texts, autotexts = ax.pie(
         counts,
         labels=labels,
@@ -330,52 +370,43 @@ def show_summary_pie_chart(requirements):
         wedgeprops=dict(width=0.4, edgecolor='white'),
         textprops=dict(color="black", fontsize=10)
     )
-    ax.set_title("📊 ISO 29148 Evaluation Distribution", fontsize=12)
+    ax.set_title(" Requirement Type Distribution", fontsize=12)
     plt.setp(autotexts, weight="bold", fontsize=10)
 
-    with st.expander("📊 View ISO Evaluation Pie Chart", expanded=False):
+    with st.expander("📊 View Requirement Type Pie Chart", expanded=False):
         st.pyplot(fig)
 
-if 'final_response' in st.session_state and st.session_state.get('evaluation_done'):
-    all_reqs = st.session_state['final_response']['functional_requirements'] + st.session_state['final_response']['non_functional_requirements']
-    if any("quality_evaluation" in req for req in all_reqs):
-        st.subheader("📈 Evaluation Summary Dashboard")
-        show_summary_metrics(all_reqs)
-        show_summary_pie_chart(all_reqs)
-    else:
-        st.info("ℹ️ Quality evaluations not found. Please extract and evaluate requirements first.")
 
-def show_evaluation_chart(requirements):
-    from collections import defaultdict
-    import matplotlib.pyplot as plt
+def show_quality_score_chart(requirements):
+    score_map = defaultdict(list)
 
-    quality_counts = defaultdict(lambda: {"Yes": 0, "Partially": 0, "No": 0})
     for req in requirements:
-        for charac, result in req.get("quality_evaluation", {}).items():
-            quality_counts[charac][result["value"]] += 1
+        qa = req.get("quality_evaluation", {})
+        for criterion, result in qa.items():
+            try:
+                score = float(result.get("score", 0))
+                score_map[criterion].append(score)
+            except ValueError:
+                continue
 
-    labels = list(quality_counts.keys())
-    yes = [quality_counts[label]["Yes"] for label in labels]
-    partially = [quality_counts[label]["Partially"] for label in labels]
-    no = [quality_counts[label]["No"] for label in labels]
+    avg_scores = {k: sum(v) / len(v) if v else 0 for k, v in score_map.items()}
+    criteria = list(avg_scores.keys())
+    scores = [avg_scores[c] for c in criteria]
 
-    x = range(len(labels))
-    bar_width = 0.25
+    fig, ax = plt.subplots(figsize=(8, 4))
+    bars = ax.bar(criteria, scores)
+    ax.set_title("Average Quality Scores per ISO 29148 Criterion", fontsize=12)
+    ax.set_ylabel("Average Score (1 to 5)")
+    ax.set_ylim(0, 5)
+    plt.xticks(rotation=30, ha="right")
 
-    fig, ax = plt.subplots(figsize=(6, 3))  # Shorter chart
-    ax.bar(x, yes, width=bar_width, label='✅ Yes', edgecolor='white')
-    ax.bar([p + bar_width for p in x], partially, width=bar_width, label='🟠 Partially', edgecolor='white')
-    ax.bar([p + 2 * bar_width for p in x], no, width=bar_width, label='❌ No', edgecolor='white')
+    for bar, score in zip(bars, scores):
+        height = bar.get_height()
+        ax.annotate(f"{score:.2f}", xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
 
-    ax.set_xticks([p + bar_width for p in x])
-    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
-    ax.set_ylabel("Count", fontsize=10)
-    ax.set_title("📈 ISO 29148 Evaluation Summary", fontsize=12)
-    ax.legend(fontsize=9)
-
-    with st.expander("📈 View Evaluation Bar Chart", expanded=False):
+    with st.expander("📊 View Average Quality Scores Bar Chart", expanded=False):
         st.pyplot(fig)
-
 
 if uploaded_file:
     extracted_text = ""
@@ -387,20 +418,64 @@ if uploaded_file:
         st.warning("Unsupported file type.")
 
     source_lang_code = language_code_map[selected_language]
+
+    # Detect actual document language
+    try:
+        detected_lang_code = detect(extracted_text)
+        detected_lang_name = [lang for lang, code in language_code_map.items() if code == detected_lang_code]
+        detected_lang_name = detected_lang_name[0] if detected_lang_name else detected_lang_code
+    except Exception:
+        detected_lang_code = "unknown"
+        detected_lang_name = "Unknown"
+
+    # Warn if mismatch
+    if detected_lang_code != source_lang_code:
+        st.warning(
+            f"⚠️ The uploaded document seems to be in **{detected_lang_name}**, "
+            f"but you selected **{selected_language}**. Please verify the language setting."
+        )
+
+    # Proceed with translation
     extracted_text = translate_to_english(extracted_text, source_lang_code)
+
+    # ⛑️ Initialize session state if not already
+    if "all_reqs" not in st.session_state:
+        st.session_state["all_reqs"] = []
+        st.session_state["final_response"] = {
+            "functional_requirements": [],
+            "non_functional_requirements": [],
+            "missing_critical_requirements": [],
+            "recommendations": []
+        }
 
     if st.button("Extract & Evaluate Requirements"):
         if not extracted_text:
             st.warning("⚠️ No text found to analyze.")
         else:
             st.info("📤 Sending document to OpenAI for requirement extraction...")
+
             chunks = split_text(extracted_text)
             all_results = []
+
+            objectives_summary = []
+            for idx, chunk in enumerate(chunks):
+                try:
+                    objective_prompt = get_document_objectives_prompt(chunk)
+                    response = client.chat.completions.create(
+                        model="gpt-4-turbo",
+                        messages=objective_prompt
+                    )
+                    objectives_summary.append(response.choices[0].message.content.strip())
+                except Exception as e:
+                    st.warning(f"⚠️ Objective extraction failed on chunk {idx + 1}: {str(e)}")
+                    objectives_summary.append("")
+
+            # Save to session
+            st.session_state["document_objectives"] = "\n\n".join([o for o in objectives_summary if o])
 
             for idx, chunk in enumerate(chunks):
                 st.write(f"🚀 Processing chunk {idx + 1}/{len(chunks)}")
                 prompt = get_requirement_extraction_prompt_json(chunk)
-
                 try:
                     response = client.chat.completions.create(
                         model="gpt-4-turbo",
@@ -425,86 +500,182 @@ if uploaded_file:
                 final_response["missing_critical_requirements"].extend(res.get("missing_critical_requirements", []))
                 final_response["recommendations"].extend(res.get("recommendations", []))
 
-            all_reqs = final_response["functional_requirements"] + final_response["non_functional_requirements"]
-
             cleaned_text = clean_text(extracted_text)
 
             with st.expander("🖍️ View Full Document", expanded=False):
-
                 st.markdown(f"<div style='white-space: pre-wrap; font-size: 15px;'>{cleaned_text}</div>", unsafe_allow_html=True)
 
-            st.subheader("📋 Extracted Requirements")
-            st.markdown("### 🛠 Functional Requirements")
-            for req in sorted(final_response["functional_requirements"], key=lambda r: r["RequirementID"]):
-                st.markdown(f"- **{req['RequirementID']}**: {req['Requirement']}")
+            # ✅ Persist final response and requirements
+            st.session_state["final_response"] = final_response
+            st.session_state["all_reqs"] = final_response["functional_requirements"] + final_response["non_functional_requirements"]
 
-            st.markdown("### 🎯 Non-Functional Requirements")
-            for req in sorted(final_response["non_functional_requirements"], key=lambda r: r["RequirementID"]):
-                st.markdown(f"- **{req['RequirementID']}**: {req['Requirement']}")
+    # ✅ Show charts and requirements if already available in state
+    if st.session_state["all_reqs"]:
+        all_reqs = st.session_state["all_reqs"]
+        show_summary_metrics(all_reqs)
+        show_type_distribution_chart(all_reqs)
 
-            st.subheader("🧪 ISO 29148 Quality Evaluation")
 
-            for req in all_reqs:
-                with st.expander(f"🔍 {req['RequirementID']} Evaluation", expanded=False):
+        st.subheader("📋 Extracted Requirements")
+
+        if "document_objectives" in st.session_state:
+            with st.expander("🎯 Document Objectives, Goals, and Purpose", expanded=False):
+                st.markdown(f"<div style='white-space: pre-wrap; font-size: 15px;'>{st.session_state['document_objectives']}</div>", unsafe_allow_html=True)
+
+        st.markdown("### 🛠 Functional Requirements")
+
+        for req in sorted([r for r in all_reqs if r["RequirementID"].startswith("FR")], key=lambda r: r["RequirementID"]):
+            with st.expander(f"**{req['RequirementID']}**: {req['Requirement']}", expanded=False):
+                state_key = f"{req['RequirementID']}_evaluated"
+                button_key = f"{req['RequirementID']}_evaluate_btn"
+                if state_key in st.session_state:
+                    req["quality_evaluation"] = st.session_state[state_key]
+                    for dim, val in req["quality_evaluation"].items():
+                        score = val.get("score", "N/A")
+                        justification = val.get("justification", "No reason provided.")
+                        st.markdown(f"• **{dim}**: Score **{score}** — _{justification}_")
+                elif st.button(f"🧪 Evaluate {req['RequirementID']}", key=button_key):
                     with st.spinner("Evaluating..."):
                         result = evaluate_requirement_quality_iso(req["Requirement"], req["RequirementID"])
                         req["quality_evaluation"] = result.get("ISO29148_QualityAssessment", {})
-                        for dim, val in req["quality_evaluation"].items():
-                            st.markdown(f"• **{dim}**: {val['value']} — _{val['reason']}_")
+                        st.session_state[state_key] = req["quality_evaluation"]
+                    for dim, val in req["quality_evaluation"].items():
+                        score = val.get("score", "N/A")
+                        justification = val.get("justification", "No reason provided.")
+                        st.markdown(f"• **{dim}**: Score **{score}** — _{justification}_")
 
-            show_summary_metrics(all_reqs)
-            show_evaluation_chart(all_reqs)
-            show_summary_pie_chart(all_reqs)
+        st.markdown("### 🎯 Non-Functional Requirements")
+        for req in sorted([r for r in all_reqs if r["RequirementID"].startswith("NFR")], key=lambda r: r["RequirementID"]):
+            with st.expander(f"**{req['RequirementID']}**: {req['Requirement']}", expanded=False):
+                state_key = f"{req['RequirementID']}_evaluated"
+                button_key = f"{req['RequirementID']}_evaluate_btn"
+                if state_key in st.session_state:
+                    req["quality_evaluation"] = st.session_state[state_key]
+                    for dim, val in req["quality_evaluation"].items():
+                        score = val.get("score", "N/A")
+                        justification = val.get("justification", "No reason provided.")
+                        st.markdown(f"• **{dim}**: Score **{score}** — _{justification}_")
+                elif st.button(f"🧪 Evaluate {req['RequirementID']}", key=button_key):
+                    with st.spinner("Evaluating..."):
+                        result = evaluate_requirement_quality_iso(req["Requirement"], req["RequirementID"])
+                        req["quality_evaluation"] = result.get("ISO29148_QualityAssessment", {})
+                        st.session_state[state_key] = req["quality_evaluation"]
+                    for dim, val in req["quality_evaluation"].items():
+                        score = val.get("score", "N/A")
+                        justification = val.get("justification", "No reason provided.")
+                        st.markdown(f"• **{dim}**: Score **{score}** — _{justification}_")
 
-            # ✅ Store evaluated data
-            st.session_state["all_reqs"] = all_reqs
-            st.session_state["final_response"] = final_response
-            st.session_state["evaluation_done"] = True
 
-            # ✅ Prepare export files
-            if "json_report" not in st.session_state:
-                st.session_state["json_report"] = json.dumps(final_response, indent=4)
+if "all_reqs" in st.session_state:
+    all_reqs = st.session_state["all_reqs"]
 
-            if "excel_buffer" not in st.session_state:
-                excel_df = export_to_excel(all_reqs)
-                buffer = BytesIO()
-                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                    excel_df.to_excel(writer, index=False)
-                buffer.seek(0)
-                st.session_state["excel_buffer"] = buffer
+    if "json_report" not in st.session_state:
+        st.session_state["json_report"] = json.dumps(st.session_state["final_response"], indent=4)
 
-            if "csv_report" not in st.session_state:
-                st.session_state["csv_report"] = export_to_excel(all_reqs).to_csv(index=False)
+    if "excel_buffer" not in st.session_state:
+        excel_df = export_to_excel(all_reqs)
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            excel_df.to_excel(writer, index=False)
+        buffer.seek(0)
+        st.session_state["excel_buffer"] = buffer
 
-# ✅ Download section
-st.subheader("⬇️ Download Results")
+    if "csv_report" not in st.session_state:
+        st.session_state["csv_report"] = export_to_excel(all_reqs).to_csv(index=False)
 
-if "json_report" in st.session_state:
-    st.download_button("📥 Download JSON Report", st.session_state["json_report"], "requirement_analysis.json", "application/json")
+# ✅ Show extra sections only if requirements exist
+if "all_reqs" in st.session_state and st.session_state["all_reqs"]:
 
-if "excel_buffer" in st.session_state:
-    st.download_button("📊 Download Excel Report", st.session_state["excel_buffer"], "requirement_analysis.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # 🔁 Manage Evaluation State
+    st.markdown("### 🧹 Manage Evaluation State")
 
-if "csv_report" in st.session_state:
-    st.download_button("📄 Download CSV Report", st.session_state["csv_report"], "requirement_analysis.csv", "text/csv")
+    col1, col2 = st.columns(2)
 
-# ✅ Feedback form
-st.subheader("🗣️ User Feedback")
+    with col1:
+        if st.button("🔁 Reset All Evaluations"):
+            keys_to_remove = [key for key in st.session_state if key.endswith("_evaluated")]
+            for key in keys_to_remove:
+                del st.session_state[key]
+            st.success("✅ All requirement evaluations have been reset.")
+            st.rerun()
 
-if "feedback_log" not in st.session_state:
-    st.session_state["feedback_log"] = []
+    with col2:
+        if st.button("🧪 Evaluate All Requirements"):
+            progress_placeholder = st.empty()
+            spinner = st.empty()
 
-user_feedback = st.text_area("💬 Leave your feedback about this analysis:")
+            with spinner:
+                with st.spinner("Evaluating all requirements..."):
+                    total = len(st.session_state["all_reqs"])
+                    for idx, req in enumerate(st.session_state["all_reqs"]):
+                        req_id = req["RequirementID"]
+                        state_key = f"{req_id}_evaluated"
+                        if state_key not in st.session_state:
+                            result = evaluate_requirement_quality_iso(req["Requirement"], req_id)
+                            req["quality_evaluation"] = result.get("ISO29148_QualityAssessment", {})
+                            st.session_state[state_key] = req["quality_evaluation"]
 
-if st.button("✅ Submit Feedback"):
-    feedback_entry = {
-        "filename": uploaded_file.name if uploaded_file else "unknown_file",
-        "feedback": user_feedback,
-        "total_requirements": len(st.session_state.get("all_reqs", []))
-    }
-    st.session_state["feedback_log"].append(feedback_entry)
-    st.success("✅ Thank you for your feedback!")
+                        progress_placeholder.markdown(
+                            f"🔍 Evaluated **{req_id}** ({idx + 1}/{total})..."
+                        )
+            spinner.empty()
+            progress_placeholder.success("✅ All requirements evaluated!")
+            st.session_state["all_evaluated"] = True
+            st.rerun()
 
-if st.session_state["feedback_log"]:
-    feedback_json = json.dumps(st.session_state["feedback_log"], indent=2)
-    st.download_button("📤 Download Feedback Log", feedback_json, "feedback_log.json", "application/json")
+    if st.session_state.get("all_evaluated"):
+        show_quality_score_chart(st.session_state["all_reqs"])
+        del st.session_state["all_evaluated"]
+
+    # 📥 Download section
+    st.markdown("### ⬇️ Download Results")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if "json_report" in st.session_state:
+            st.download_button(
+                "📥 Download JSON Report",
+                st.session_state["json_report"],
+                "requirement_analysis.json",
+                "application/json"
+            )
+
+    with col2:
+        if "excel_buffer" in st.session_state:
+            st.download_button(
+                "📊 Download Excel Report",
+                st.session_state["excel_buffer"],
+                "requirement_analysis.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+    with col3:
+        if "csv_report" in st.session_state:
+            st.download_button(
+                "📄 Download CSV Report",
+                st.session_state["csv_report"],
+                "requirement_analysis.csv",
+                "text/csv"
+            )
+
+    # 🗣️ User Feedback
+    st.markdown("### 🗣️ User Feedback")
+
+    if "feedback_log" not in st.session_state:
+        st.session_state["feedback_log"] = []
+
+    user_feedback = st.text_area("💬 Leave your feedback about this analysis:")
+
+    if st.button("✅ Submit Feedback"):
+        feedback_entry = {
+            "filename": uploaded_file.name if uploaded_file else "unknown_file",
+            "feedback": user_feedback,
+            "total_requirements": len(st.session_state.get("all_reqs", []))
+        }
+        st.session_state["feedback_log"].append(feedback_entry)
+        st.success("✅ Thank you for your feedback!")
+
+        # Save to local file
+        with open(FEEDBACK_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state["feedback_log"], f, indent=2)
