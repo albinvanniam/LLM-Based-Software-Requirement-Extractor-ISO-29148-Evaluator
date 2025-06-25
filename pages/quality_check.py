@@ -500,6 +500,18 @@ if uploaded_file:
                 final_response["missing_critical_requirements"].extend(res.get("missing_critical_requirements", []))
                 final_response["recommendations"].extend(res.get("recommendations", []))
 
+            # 🔁 Reassign unique IDs for all requirements
+            fr_counter = 1
+            nfr_counter = 1
+
+            for req in final_response["functional_requirements"]:
+                req["RequirementID"] = f"FR-{fr_counter:03}"
+                fr_counter += 1
+
+            for req in final_response["non_functional_requirements"]:
+                req["RequirementID"] = f"NFR-{nfr_counter:03}"
+                nfr_counter += 1
+
             cleaned_text = clean_text(extracted_text)
 
             with st.expander("🖍️ View Full Document", expanded=False):
