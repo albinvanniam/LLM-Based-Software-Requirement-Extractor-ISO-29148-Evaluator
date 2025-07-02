@@ -1,8 +1,6 @@
 import streamlit as st
 import json
 import os
-import base64
-from jinja2 import Template
 import fitz  # PyMuPDF
 import matplotlib.pyplot as plt
 from collections import defaultdict, Counter
@@ -11,11 +9,7 @@ from io import BytesIO, StringIO
 from docx import Document
 from openai import OpenAI
 from dotenv import load_dotenv
-import uuid
-import tempfile
-import shutil
 import matplotlib
-from difflib import SequenceMatcher
 import re
 from langdetect import detect, DetectorFactory
 DetectorFactory.seed = 0  # For consistent results
@@ -438,7 +432,7 @@ if uploaded_file:
     # Proceed with translation
     extracted_text = translate_to_english(extracted_text, source_lang_code)
 
-    # ⛑️ Initialize session state if not already
+    #  Initialize session state if not already
     if "all_reqs" not in st.session_state:
         st.session_state["all_reqs"] = []
         st.session_state["final_response"] = {
@@ -500,7 +494,7 @@ if uploaded_file:
                 final_response["missing_critical_requirements"].extend(res.get("missing_critical_requirements", []))
                 final_response["recommendations"].extend(res.get("recommendations", []))
 
-            # 🔁 Reassign unique IDs for all requirements
+            #  Reassign unique IDs for all requirements
             fr_counter = 1
             nfr_counter = 1
 
@@ -517,16 +511,27 @@ if uploaded_file:
             with st.expander("🖍️ View Full Document", expanded=False):
                 st.markdown(f"<div style='white-space: pre-wrap; font-size: 15px;'>{cleaned_text}</div>", unsafe_allow_html=True)
 
-            # ✅ Persist final response and requirements
+            #  Persist final response and requirements
             st.session_state["final_response"] = final_response
             st.session_state["all_reqs"] = final_response["functional_requirements"] + final_response["non_functional_requirements"]
 
-    # ✅ Show charts and requirements if already available in state
+    #  Force regeneration of export files to avoid stale or empty downloads
+            st.session_state["json_report"] = json.dumps(st.session_state["final_response"], indent=4)
+
+            excel_df = export_to_excel(st.session_state["all_reqs"])
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                excel_df.to_excel(writer, index=False)
+            buffer.seek(0)
+            st.session_state["excel_buffer"] = buffer
+
+            st.session_state["csv_report"] = excel_df.to_csv(index=False)
+
+    #  Show charts and requirements if already available in state
     if st.session_state["all_reqs"]:
         all_reqs = st.session_state["all_reqs"]
         show_summary_metrics(all_reqs)
         show_type_distribution_chart(all_reqs)
-
 
         st.subheader("📋 Extracted Requirements")
 
@@ -595,7 +600,7 @@ if "all_reqs" in st.session_state:
     if "csv_report" not in st.session_state:
         st.session_state["csv_report"] = export_to_excel(all_reqs).to_csv(index=False)
 
-# ✅ Show extra sections only if requirements exist
+#  Show extra sections only if requirements exist
 if "all_reqs" in st.session_state and st.session_state["all_reqs"]:
 
     # 🔁 Manage Evaluation State
@@ -624,22 +629,35 @@ if "all_reqs" in st.session_state and st.session_state["all_reqs"]:
                         state_key = f"{req_id}_evaluated"
                         if state_key not in st.session_state:
                             result = evaluate_requirement_quality_iso(req["Requirement"], req_id)
-                            req["quality_evaluation"] = result.get("ISO29148_QualityAssessment", {})
-                            st.session_state[state_key] = req["quality_evaluation"]
+                            quality_data = result.get("ISO29148_QualityAssessment", {})
+                            req["quality_evaluation"] = quality_data     # ✅ Make sure this line is here!
+                            st.session_state[state_key] = quality_data
 
                         progress_placeholder.markdown(
                             f"🔍 Evaluated **{req_id}** ({idx + 1}/{total})..."
                         )
+
+            #  Force regenerate reports with quality data
+            st.session_state["json_report"] = json.dumps(st.session_state["final_response"], indent=4)
+            excel_df = export_to_excel(st.session_state["all_reqs"])
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                excel_df.to_excel(writer, index=False)
+            buffer.seek(0)
+            st.session_state["excel_buffer"] = buffer
+            st.session_state["csv_report"] = excel_df.to_csv(index=False)
+
             spinner.empty()
-            progress_placeholder.success("✅ All requirements evaluated!")
+            progress_placeholder.success("✅ All requirements evaluated and saved!")
             st.session_state["all_evaluated"] = True
             st.rerun()
+
 
     if st.session_state.get("all_evaluated"):
         show_quality_score_chart(st.session_state["all_reqs"])
         del st.session_state["all_evaluated"]
 
-    # 📥 Download section
+    #  Download section
     st.markdown("### ⬇️ Download Results")
 
     col1, col2, col3 = st.columns(3)

@@ -98,21 +98,9 @@ custom_css = """
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# Define a full-width horizontal navbar
-selected = option_menu(
-    menu_title="",
-    options=["🏠 Home", "📂 Extraction Tool", "✅ Quality Check"],
-    icons=["house", "folder", "check2-circle"],
-    menu_icon="cast",
-    default_index=0,
-    orientation="horizontal",
-)
-
-# Route to different pages based on selection
-if selected == "🏠 Home":
-    st.title("🚀 Welcome to the LLM-Powered Requirements Extraction Tool")
-    st.markdown("""
-        This tool allows you to:
+st.title("🚀 Welcome to the LLM-Powered Requirements Extraction Tool")
+st.markdown("""
+            This tool allows you to:
         
         - 📂 Upload project documents (**PDF, DOCX, TXT**)
         
@@ -125,14 +113,5 @@ if selected == "🏠 Home":
         - 📝 **Edit and update** requirements in real-time
         
         - 📤 **Export** final requirements in **DOCX, CSV, or PDF**
-        
-        Navigate to **Extraction Tool** or **Quality Check** using the navbar.
     """)
 
-elif selected == "📂 Extraction Tool":
-    from pages import extraction_tool
-    extraction_tool.app()  # Ensure correct function is called
-
-elif selected == "✅ Quality Check":
-    from pages import quality_check
-    quality_check.app()  # Ensure correct function is called
